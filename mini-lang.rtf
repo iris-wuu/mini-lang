@@ -1,0 +1,575 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2513
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww10800\viewh8400\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 (* Q0  : Get familiar with the external syntax of MiniML *)\
+let parse_tests : (string * (string, exp) either) list = [\
+    (* Provide your tests for the parser *)\
+  ("1;", Right (Int 1))]\
+\
+\
+let free_vars_tests : (exp * name list) list = []\
+\
+(* Q1  : Find the free variables in an expression *)\
+let rec free_vars (e : exp) : name list = \
+  match e with\
+  | Int _ -> []\
+  | Bool _ -> []\
+  | If (e, e1, e2) -> union (free_vars(e)) (union (free_vars(e1)) (free_vars(e2)))\
+  | Primop (op, exp_list) ->\
+      begin\
+        match exp_list with\
+        | [] -> []\
+        | e::rest -> union (free_vars(e)) (free_vars(Primop (op, rest))) \
+      end \
+  | Tuple exp_list -> \
+      begin\
+        match exp_list with\
+        | [] -> [] \
+        | e::rest -> union (free_vars(e)) (free_vars(Tuple rest))\
+      end \
+  | Fn (x, _, e) -> delete [x] (free_vars(e))\
+  | Rec (x, _, e) -> delete [x] (free_vars(e)) \
+  | Let (dec_list, e) -> \
+      begin\
+        match dec_list with\
+        | [] -> []\
+        | Val (e1, x)::rest -> \
+            union (free_vars (Let (rest, e))) (union (free_vars(e1)) (delete [x] (free_vars(e)))) \
+        | Valtuple (e1, name_list)::rest -> \
+            union (free_vars (Let (rest, e))) (union (free_vars(e1)) (delete name_list (free_vars(e))))\
+        | ByName (e1, x)::rest ->\
+            union (free_vars (Let (rest, e))) (union (free_vars(e1)) (delete [x] (free_vars(e))))\
+      end \
+  | Apply (e1, e2) -> union (free_vars(e1)) (free_vars(e2))\
+  | Var x -> [x]\
+  | Anno (e, t) -> free_vars(e)\
+  \
+  \
+\
+let unused_vars_tests : (exp * name list) list = []\
+  \
+(*Two helper functions for Q2*)\
+let rec filter_vars_in_list (l: name list) (e: exp) : name list = \
+  match l with\
+  | [] -> []\
+  | el::rs -> \
+      if member el (free_vars(e)) \
+      then el::(filter_vars_in_list rs e)\
+      else filter_vars_in_list rs e \
+\
+let rec vars_of_declist_exp (rest: dec list) : name list =\
+  match rest with\
+  | [] -> []\
+  | Val (e1, x) :: r -> (free_vars (e1)) @ (vars_of_declist_exp (r))\
+  | Valtuple (e1, name_list)::r -> (free_vars (e1)) @ (vars_of_declist_exp (r))\
+  | ByName (e1, x)::r -> (free_vars (e1)) @ (vars_of_declist_exp (r))\
+\
+                                            \
+(* Q2  : Check variables are in use *)\
+let rec unused_vars (e : exp) : name list = \
+  match e with \
+  | If (e1, e2, e3) -> union (union (unused_vars e1) (unused_vars e2)) (unused_vars e3)\
+  | Primop (op, exp_list) ->\
+      begin\
+        match exp_list with\
+        | [] -> []\
+        | el :: rest -> union (unused_vars el) (unused_vars (Primop (op, rest)))\
+      end\
+  | Tuple exp_list -> \
+      begin\
+        match exp_list with\
+        | [] -> []\
+        | el :: rest -> union (unused_vars el) (unused_vars (Tuple rest))\
+      end \
+  | Fn (x, _, e) -> \
+      if member x (free_vars(e)) then delete [x] (unused_vars(e))\
+      else union [x] (unused_vars(e))\
+  | Rec (x, _, e) ->  \
+      if member x (free_vars(e)) then delete [x] (unused_vars(e))\
+      else unused_vars(e)\
+  | Let (dec_list, e) -> \
+      begin\
+        match dec_list with\
+        | [] -> [] \
+        | Val (e1, x)::rest -> \
+            if (member x (free_vars(e))) || (member x (vars_of_declist_exp (rest))) \
+            then union(union (unused_vars(e)) (unused_vars(e1))) (unused_vars(Let (rest, e))) \
+            else\
+              union (union (union [x] (unused_vars(e))) (unused_vars(e1))) (unused_vars(Let (rest, e)))\
+        \
+        | Valtuple (e1, name_list)::rest -> \
+            begin\
+              match name_list with\
+              | [] -> unused_vars(Let (rest, e))\
+              | h::r -> \
+                  if member h (free_vars (e)) || member h (vars_of_declist_exp (rest))\
+                  then union (union (unused_vars(e)) (unused_vars(e1))) (unused_vars(Let ((Valtuple (e1, r))::rest, e))) \
+                  else \
+                    union (union (union [h] (unused_vars(e))) (unused_vars(e1))) (unused_vars(Let ((Valtuple (e1, r))::rest, e)))\
+            end\
+                \
+        | ByName (e1, x)::rest ->\
+            if (member x (free_vars(e))) || (member x (vars_of_declist_exp (rest)))\
+            then union(union (unused_vars(e)) (unused_vars(e1))) (unused_vars(Let (rest, e))) \
+            else\
+              union (union (union [x] (unused_vars(e))) (unused_vars(e1))) (unused_vars(Let (rest, e)))\
+      end \
+  | Apply (e1, e2) -> union (unused_vars e1) (unused_vars e2) \
+  | _ -> []\
+  \
+\
+\
+let subst_tests : (((exp * name) * exp) * exp) list = [\
+  (((Int 1, "x"),(Fn ("x", Some(TInt), (Primop (Minus, [Var "x"; Int 1]))))), \
+   (Fn ("1x", Some(TInt), (Primop (Minus, [Var "1x"; Int 1])))));\
+  (((Var "x", "y"), Fn ("x", Some(TInt), (Var "y"))), \
+   Fn ("2x", Some(TInt), (Var "x")));\
+  (((Int 1, "x"), (Let ([Val (Int 1, "x")], Primop (Minus, [Var "x"; Int 1])))),\
+   (Let ([Val (Int 1, "3x")], Primop (Minus, [Var "3x"; Int 1]))));\
+  (((Var "x", "y"), (Let ([Val (Int 1, "x")], Primop (Minus, [Var "x"; Var "y"])))),\
+   (Let ([Val (Int 1, "4x")], Primop (Minus, [Var "4x"; Var "x"]))));\
+  (((Var "x", "y"), (Let ([Val (Rec ("y", TArrow(TInt, TInt), Fn ("x", Some(TInt), Int 3)), "y")], Apply (Var "y", Int 4)))),\
+   (Let ([Val (Rec ("7y", TArrow(TInt, TInt), Fn ("x", Some(TInt), Int 3)), "7y")], Apply (Var "7y", Int 4))));\
+  (((Var "x", "y"), (Let ([Val (Int 1, "x"); Val (Int 2, "x")], Var "y"))), \
+   (Let ([Val (Int 1, "9x"); Val (Int 2, "10x")], Var "x"))); \
+]\
+\
+(* Q3  : Substitute a variable *)\
+let rec subst ((e', x) : exp * name) (e : exp) : exp = \
+  \
+  (*Two helper functions for Q3*) \
+  let rec subst_in_declist ((expr, n) : exp * name) (declist): dec list =\
+    let Var new_name = expr in   (*The func is used to change name in declist*)\
+    match declist with \
+    | [] -> []\
+    | Val (expression1, n1)::r1 -> \
+        if n1 = n\
+        then Val (subst (Var new_name, n) expression1, new_name)::subst_in_declist (Var new_name, n) r1\
+        else Val (subst (Var new_name, n) expression1, n1)::subst_in_declist (Var new_name, n) r1\
+    | Valtuple (expression2, n2_list)::r2 -> \
+        begin\
+          match n2_list with\
+          | [] -> subst_in_declist (Var new_name, n) (r2) \
+          | el::tl -> \
+              if el = n \
+              then Valtuple (subst (Var new_name, n) expression2, [new_name])::subst_in_declist (Var new_name, n) (Valtuple (expression2, tl)::r2)\
+              else Valtuple (subst (Var new_name, n) expression2, [el])::subst_in_declist (Var new_name, n) (Valtuple (expression2, tl)::r2)\
+        end \
+    | ByName (expression3, n3)::r3 ->\
+        if n3 = n\
+        then ByName (subst (Var new_name, n) expression3, new_name)::subst_in_declist (Var new_name, n) r3 \
+        else ByName (subst (Var new_name, n) expression3, n3)::subst_in_declist (Var new_name, n) r3\
+  in\
+  \
+  let rec modified_ds ((expr, n) : exp * name) (let_exp: dec list * exp) : dec list * exp =\
+    let (declist, expre) = let_exp in\
+    match declist with\
+    | [] -> ([], subst (e', x) expre)\
+    | Val (expression1, n1)::r1 -> \
+        let new_n = fresh_var n1 in\
+        let (fst_el, snd_el) = \
+          modified_ds (expr, n) (subst_in_declist (Var new_n, n1) r1, (subst (Var new_n, n1) expre)) in\
+        ((Val (subst(expr, n) expression1, new_n)):: fst_el, snd_el) \
+        \
+    | Valtuple (expression2, n2_list)::r2 -> \
+        let rec nmlist_to_varlist l =\
+          match l with\
+          | [] -> []\
+          | el::tl -> (Var el) :: (nmlist_to_varlist tl)\
+        in\
+        let new_n2list = List.map fresh_var n2_list in\
+        let new_n2varl = nmlist_to_varlist (new_n2list) in\
+        let newnm_oldnm_list = List.combine new_n2varl n2_list in \
+        let (fst_el, snd_el) =\
+          modified_ds (expr, n) (List.fold_right (subst_in_declist) (newnm_oldnm_list) r2,\
+                                 List.fold_right (subst) (newnm_oldnm_list) expre) in\
+        ((Valtuple (subst (expr, n) expression2, new_n2list)) :: fst_el, snd_el)\
+        \
+    | ByName (expression3, n3)::r3 ->\
+        let new_n = fresh_var n3 in\
+        let (fst_el, snd_el) = \
+          modified_ds (expr, n) (subst_in_declist (Var new_n, n3) r3, (subst (Var new_n, n3) expre)) in\
+        ((Val (subst(expr, n) expression3, new_n)):: fst_el, snd_el) \
+  in\
+\
+  match e with\
+  | Var y ->\
+      if x = y then\
+        e'\
+      else\
+        Var y\
+\
+  | Int _ | Bool _ -> e\
+  | Primop (po, es) -> Primop (po, List.map (subst (e', x)) es)\
+  | If (e1, e2, e3) -> If (subst (e', x) e1, subst (e', x) e2, subst (e', x) e3)\
+  | Tuple es -> Tuple (List.map (subst (e', x)) es)\
+  | Anno (e, t) -> Anno (subst (e', x) e, t)\
+  \
+  | Let (ds, e2) -> \
+      let (a, b) = (modified_ds (e', x) (ds, e2)) in\
+      Let (a, subst (e', x) b) \
+      \
+  | Apply (e1, e2) -> Apply (subst (e', x) e1, subst (e', x) e2)\
+  | Fn (y, t, e) -> \
+      let new_y = fresh_var y in \
+      Fn (new_y, t, subst (e', x) (subst (Var new_y, y) e))\
+  | Rec (y, t, e) -> \
+      let new_y = fresh_var y in \
+      Rec (new_y, t, subst (e', x) (subst (Var new_y, y) e))\
+\
+  \
+\
+let eval_tests : (exp * exp) list = []\
+\
+(* Q4  : Evaluate an expression in big-step *)\
+let rec eval : exp -> exp =\
+  (* do not change the code from here *)\
+  let bigstep_depth = ref 0 in\
+  fun e ->\
+    if !debug >= 1 then\
+      print_endline\
+        (String.make (!bigstep_depth) ' '\
+         ^ "eval (" ^ Print.exp_to_string e ^ ")\\n");\
+    incr bigstep_depth;\
+  (* to here *)\
+    let result =\
+      match e with\
+      | Int _ | Bool _ -> e\
+      | Tuple es -> Tuple (List.map eval es)\
+      | If (e1, e2, e3) ->\
+          begin match eval e1 with\
+            | Bool b ->\
+                if b then\
+                  eval e2\
+                else\
+                  eval e3\
+            | _ -> stuck "Condition for if expression should be of the type bool"\
+          end\
+      | Anno (e, _) -> eval e     (* types are ignored in evaluation *)\
+      | Var x -> stuck ("Free variable \\"" ^ x ^ "\\" during evaluation")\
+\
+      | Fn (x, t, e) -> Fn (x, t, e)\
+      | Apply (e1, e2) -> \
+          begin\
+            match eval e1 with\
+            | Fn (x, t, e3) -> eval (subst (eval e2, x) e3)\
+            | _ -> stuck "the first expression should be evaluated to a function"\
+          end\
+      | Rec (f, t, e) -> eval (subst ((Rec (f, t, e)), f) e)\
+\
+      | Primop (And, es) -> \
+          begin\
+            match es with\
+            | e1 :: [e2] -> \
+                if eval e1 = Bool true then eval e2\
+                else if  eval e1 = Bool false then Bool false\
+                else stuck "And operator can not be applied."\
+            | _ -> stuck "two elements expected in exp list"\
+          end\
+      | Primop (Or, es) ->\
+          begin\
+            match es with\
+            | e1 :: [e2] -> \
+                if eval e1 = Bool true then Bool true\
+                else if eval e1 = Bool false then eval e2\
+                else stuck "Or operator can not be applied."\
+            | _ -> stuck "two elements expected in exp list"\
+          end\
+      | Primop (op, es) ->\
+          let vs = List.map eval es in\
+          begin match eval_op op vs with\
+            | None -> stuck "Bad arguments to primitive operation"\
+            | Some v -> v\
+          end\
+\
+      | Let (ds, e) -> \
+          begin\
+            match ds with\
+            | [] -> eval e \
+            | Val (exp1, name1) :: rest -> \
+                eval (subst ((eval exp1), name1) (Let (rest, e)))\
+            | Valtuple (exp1, name_list1) :: rest -> \
+                begin\
+                  match eval exp1 with\
+                  | Tuple vs_list -> \
+                      let value_name_list = List.combine (vs_list) (name_list1) in \
+                      eval (List.fold_right (subst) (value_name_list) (Let (rest, e)))\
+                  | _ -> stuck "exp in dec should be evaluated to tuple"\
+                end\
+            | ByName (exp1, name1) :: rest ->  \
+                eval (subst (exp1, name1) (Let (rest, e)))\
+          end\
+    in\
+  (* do not change the code from here *)\
+    decr bigstep_depth;\
+    if !debug >= 1 then\
+      print_endline\
+        (String.make (!bigstep_depth) ' '\
+         ^ "result of eval (" ^ Print.exp_to_string e ^ ") = "\
+         ^ Print.exp_to_string result ^ "\\n");\
+  (* to here *)\
+    result\
+\
+\
+let unify_tests : ((typ * typ) * unit) list = [\
+  ((TArrow(TArrow(TVar(ref None), TVar(ref (Some (TVar (ref None))))), TArrow (TVar(ref None), TBool)), \
+    TArrow(TArrow(TVar(ref (Some (TVar (ref None)))), TVar(ref None)), TArrow (TInt, TVar(ref (Some (TVar (ref None))))))), ());\
+  ((TVar \{contents = Some (TVar \{contents = Some TInt\})\}, TVar \{contents = Some TInt\}), ());\
+  ((TVar \{contents = Some TInt\}, TVar \{contents = Some (TVar \{contents = Some TInt\})\}), ());\
+  ((TVar \{contents = Some (TVar \{contents = Some TInt\})\}, TInt), ());\
+  ((TInt, TVar \{contents = Some (TVar \{contents = Some TInt\})\}), ());\
+  ((TVar \{contents = None\}, TArrow(TInt, TInt)), ());\
+  ((TVar \{contents = Some (TVar \{contents = Some (TVar \{contents = Some (TArrow (TInt, TInt))\})\})\}, TArrow(TInt, TInt)), ());\
+  ((TProduct [TInt; TBool; TVar \{contents = Some (TVar \{contents = Some TInt\})\}], TProduct [TInt; TVar \{contents = None\}; TInt]), ());\
+  ((TProduct [TInt; TBool; TVar \{contents = Some TInt\}], TProduct [TInt; TVar \{contents = None\}; TVar \{contents = Some TInt\}]), ());\
+  ((TArrow (TVar \{contents = None\}, TBool), TArrow (TBool, TBool)), ());\
+  ((TVar(ref None), TVar \{contents = Some (TVar (ref None))\}), ())\
+] \
+(* find the next function for Q5 *)\
+(* Q6  : Unify two types *)\
+let rec unify (ty1 : typ) (ty2 : typ) : unit = \
+  match (ty1, ty2) with\
+  | (TInt, TInt) | (TBool, TBool) -> () \
+  | (TVar ref1, TVar ref2) -> \
+      if !ref1 = !ref2 then () \
+      else begin\
+        match (!ref1, !ref2) with\
+        | (Some (TVar ref3), _) -> (unify (TVar ref3) ty2)\
+        | (_, Some (TVar ref3)) -> (unify ty1 (TVar ref3)) \
+        | (None, _) -> (ref1 := Some (TVar ref2); unify ty1 ty2)\
+        | (_, None) -> (ref2 := Some (TVar ref1); unify ty1 ty2) \
+        | _ -> type_fail "type doesn't match; unification fails"\
+      end\
+  | (TVar ref1, t2) -> \
+      if !ref1 = Some t2 then ()\
+      else if !ref1 = None then (ref1 := Some t2; unify ty1 ty2)\
+      else\
+        begin\
+          match ref1 with\
+          | \{contents = Some t3\} -> unify t3 ty2\
+          | _ -> type_fail "type doesn't match; unification fails" \
+        end \
+  | (t1, TVar ref2) -> \
+      if !ref2 = Some t1 then () \
+      else if !ref2 = None then (ref2 := Some t1; unify ty1 ty2) \
+      else\
+        begin\
+          match ref2 with\
+          | \{contents = Some t3\} -> unify ty1 t3\
+          | _ -> type_fail "type doesn't match; unification fails" \
+        end\
+        \
+  | (TProduct list1, TProduct list2) ->\
+      if List.length list1 != List.length list2\
+      then type_fail "two lists need to have same length"\
+      else if list1 = list2 then ()\
+      else begin match (list1, list2) with\
+        | ([], []) -> ()\
+        | (t1::r1, t2::r2) ->\
+            begin\
+              match (t1, t2) with\
+              | (TVar ref1, TVar ref2) -> (unify t1 t2; unify (TProduct r1) (TProduct r2))\
+              | (TVar ref1, _) -> (unify t1 t2; unify (TProduct r1) (TProduct r2))\
+              | (_, TVar ref2) -> (unify t1 t2; unify (TProduct r1) (TProduct r2))\
+              | (_, _) -> (unify t1 t2; unify (TProduct r1) (TProduct r2)) \
+            end\
+      end \
+  | (TArrow (a, b), TArrow (c, d)) -> (unify a c; unify b d)\
+  | _ -> type_fail "type doesn't match; unification fails" \
+  \
+           \
+\
+let infer_tests : ((context * exp) * typ) list = []\
+(* Q5  : Type an expression *)\
+(* Q7* : Implement the argument type inference\
+         For this question, move this function below the "unify". *) \
+let rec infer (ctx : context) (e : exp) : typ = \
+  match e with\
+  | Int _ -> TInt \
+  | Bool _ -> TBool\
+  | Var x -> ctx_lookup ctx x\
+  | If (e1, e2, e3) -> \
+      let tp_e1 = infer ctx e1 in \
+      let tp_e2 = infer ctx e2 in \
+      let tp_e3 = infer ctx e3 in \
+      (unify tp_e1 TBool; unify tp_e2 tp_e3; tp_e2) \
+  | Fn (x, typ_option, e) -> \
+      begin\
+        match typ_option with\
+        | Some type_x -> \
+            let new_ctx = extend ctx (x, type_x) in \
+            TArrow(type_x, (infer (new_ctx) (e)))\
+        | None -> \
+            let new_tv = fresh_tvar() in\
+            let new_ctx = extend ctx (x, new_tv) in \
+            let t_exp = infer new_ctx e in\
+            let t_var = infer new_ctx (Var x) in\
+            TArrow (t_var, t_exp) \
+      end\
+  | Rec (f, type_fn, e) -> \
+      let ctx = extend ctx (f, type_fn) in \
+      let tp1 = infer ctx e in (unify type_fn tp1; type_fn) \
+                               \
+  | Apply (e1, e2) ->\
+      let tp1 = infer ctx e1 in let tp2 = infer ctx e2 in\
+      begin\
+        match (tp1, tp2) with\
+        | (TArrow (type_e1, type_e2), type_e3) -> \
+            (unify type_e1 type_e3; type_e2) \
+        | _ -> type_fail "not well typed"\
+      end\
+      \
+  | Anno (e, type_e) -> let tp1 = infer ctx e in (unify tp1 type_e; type_e)\
+                                                 \
+  | Primop (op, exp_list) ->\
+      begin\
+        match op with\
+        | Equals | NotEquals | LessThan | LessEqual | GreaterThan | GreaterEqual -> \
+            begin\
+              match exp_list with\
+              | [el1; el2] -> \
+                  let tp1 = infer ctx el1 in let tp2 = infer ctx el2 in\
+                  if (typ_eq TInt tp1) || (typ_eq TInt tp2) \
+                  then (unify tp1 tp2; TBool) \
+                  else type_fail "element in exp list should have type TInt"\
+              | _ -> raise NotImplemented \
+            end\
+        | Plus | Minus | Times | Div ->\
+            begin\
+              match exp_list with \
+              | [el1; el2] -> \
+                  let tp1 = infer ctx el1 in let tp2 = infer ctx el2 in\
+                  if (typ_eq TInt tp1) || (typ_eq TInt tp2) \
+                  then (unify tp1 tp2; TInt)\
+                  else type_fail "element in exp list should have type TInt"\
+              | _ -> raise NotImplemented \
+            end \
+        | And | Or ->\
+            begin\
+              match exp_list with \
+              | [el1; el2] -> \
+                  let tp1 = infer ctx el1 in let tp2 = infer ctx el2 in\
+                  if (typ_eq TBool tp1) || (typ_eq TBool tp2) \
+                  then (unify tp1 tp2; TBool)\
+                  else type_fail "element in exp list should have type TBool"\
+              | _ -> raise NotImplemented\
+            end \
+        | Negate ->\
+            begin\
+              match exp_list with \
+              | [el] -> let tp1 = infer ctx el in (unify tp1 TInt; TInt)\
+              | _ -> raise NotImplemented\
+            end \
+      end \
+      \
+  | Let (dec_list, e) -> \
+      let rec make_dec_ctx (ori_ctx) (dec_list1): context =\
+        match dec_list1 with\
+        | [] -> ori_ctx\
+        | Val (exp1, name1) :: rest ->\
+            let new_ctx = extend ori_ctx (name1, (infer ori_ctx exp1)) in\
+            make_dec_ctx new_ctx rest\
+        | Valtuple (exp1, name_list) :: rest ->\
+            begin\
+              let type_tuple = infer ctx exp1 in \
+              match type_tuple with\
+              | TProduct type_list ->\
+                  let new_ctx = extend_list ori_ctx (List.combine name_list type_list) in\
+                  make_dec_ctx new_ctx rest\
+              | _ -> type_fail "not well typed"\
+            end\
+        | ByName (exp1, name1) :: rest -> \
+            let new_ctx = extend ori_ctx (name1, (infer ori_ctx exp1)) in\
+            make_dec_ctx new_ctx rest\
+      in \
+      infer (make_dec_ctx (ctx) (dec_list)) e \
+        \
+  | Tuple exp_list -> TProduct (List.map (infer ctx) exp_list) \
+  \
+\
+\
+(* Now you can play with the language that you've implemented! *)\
+let execute (s: string) : unit =\
+  match P.parse s with\
+  | Left s -> print_endline ("parsing failed: " ^ s)\
+  | Right e ->\
+      try\
+       (* first we type check the program *)\
+        ignore (infer (Ctx []) e);\
+        let result = eval e in\
+        print_endline ("program is evaluated to: " ^ Print.exp_to_string result)\
+      with\
+      | NotImplemented -> print_endline "code is not fully implemented"\
+      | Stuck s -> print_endline ("evaluation got stuck: " ^ s)\
+      | NotFound -> print_endline "variable lookup failed"\
+      | TypeError s -> print_endline ("type error: " ^ s)\
+      | e -> print_endline ("unknown failure: " ^ Printexc.to_string e)\
+               \
+               \
+(************************************************************\
+ *                     Tester template:                     *\
+ *         Codes to test your interpreter by yourself.      *\
+ *         You can change these to whatever you want.       *\
+ *                We won't grade these codes                *\
+ ************************************************************)\
+let list_to_string el_to_string l : string =\
+  List.fold_left\
+    begin fun acc el ->\
+      if acc = "" then\
+        el_to_string el\
+      else\
+        acc ^ "; " ^ el_to_string el\
+    end\
+    ""\
+    l\
+  |> fun str -> "[" ^ str ^ "]"\
+\
+let run_test name f ts stringify : unit =\
+  List.iteri\
+    begin fun idx (input, expected_output) ->\
+      try\
+        let output = f input in\
+        if output <> expected_output then\
+          begin\
+            print_string (name ^ " test #" ^ string_of_int idx ^ " failed\\n");\
+            print_string (stringify output ^ " <> " ^ stringify expected_output);\
+            print_newline ()\
+          end\
+      with\
+      | exn ->\
+          print_string (name ^ " test #" ^ string_of_int idx ^ " raised an exception:\\n");\
+          print_string (Printexc.to_string exn);\
+          print_newline ()\
+    end\
+    ts\
+\
+let run_free_vars_tests () : unit =\
+  run_test "free_vars" free_vars free_vars_tests (list_to_string (fun x -> x))\
+\
+let run_unused_vars_tests () : unit =\
+  run_test "unused_vars" unused_vars unused_vars_tests (list_to_string (fun x -> x))\
+\
+let run_subst_tests () : unit =\
+  run_test "subst" (fun (s, e) -> subst s e) subst_tests Print.exp_to_string\
+\
+let run_eval_tests () : unit =\
+  run_test "eval" eval eval_tests Print.exp_to_string\
+\
+(* You may want to change this to use the unification (unify) instead of equality (<>) *)\
+let run_infer_tests () : unit =\
+  run_test "infer" (fun (ctx, e) -> infer ctx e) infer_tests Print.typ_to_string\
+\
+let run_unify_tests () : unit =\
+  run_test "unify" (fun (ty1, ty2) -> unify ty1 ty2) unify_tests (fun () -> "()")\
+\
+let run_all_tests () : unit =\
+  run_free_vars_tests ();\
+  run_unused_vars_tests ();\
+  run_subst_tests ();\
+  run_eval_tests ();\
+  run_infer_tests ();\
+  run_unify_tests ()}
